@@ -5,27 +5,27 @@ in Java, Rust, Python, TypeScript, C++, C#, and Go — from one shared design.
 This document describes that shared design, then the ways each
 implementation necessarily diverges from it.
 
-- [`seda-bus-java`](../seda-bus-java/) — `1.3.1`; the original. Optional
+- [`seda-bus-java`](https://github.com/resolvingarchitecture/seda-bus-java) — `1.3.1`; the original. Optional
   guaranteed-delivery persistence. Depends on `ra-common`.
-- [`seda-bus-rust`](../seda-bus-rust/) — `0.3.0`; zero-dependency (only `log`), a
+- [`seda-bus-rust`](https://github.com/resolvingarchitecture/seda-bus-rust) — `0.3.0`; zero-dependency (only `log`), a
   real shared OS-thread pool. The one port not yet rewired onto `ra-common`'s
   `Envelope` — still its own standalone struct.
-- [`seda-bus-python`](../seda-bus-python/) — `0.2.0`; depends on `ra-common`
+- [`seda-bus-python`](https://github.com/resolvingarchitecture/seda-bus-python) — `0.2.0`; depends on `ra-common`
   (carries `ra_common.Envelope` as of a `0.2.0` rewire); built to exercise
   free-threaded (PEP 703) CPython.
-- [`seda-bus-ts`](../seda-bus-ts/) — `0.2.0`; depends on `@resolvingarchitecture/ra-common`
+- [`seda-bus-ts`](https://github.com/resolvingarchitecture/seda-bus-ts) — `0.2.0`; depends on `@resolvingarchitecture/ra-common`
   (same `0.2.0` rewire); event-loop model with an optional `Worker`-thread
   transport for CPU-bound stages.
-- [`seda-bus-cpp`](../seda-bus-cpp/) — `0.1.0`; header-only C++20, depends on
+- [`seda-bus-cpp`](https://github.com/resolvingarchitecture/seda-bus-cpp) — `0.1.0`; header-only C++20, depends on
   `ra-common-cpp` (carries `ra::common::Envelope`). Follows `seda-bus-rust`'s
   concurrency model almost mechanically (real OS threads, hand-rolled pool,
   atomic-CAS permits) but Python/TS's envelope choice.
-- [`seda-bus-cs`](../seda-bus-cs/) — `0.1.0`; C# / .NET 8, depends on
+- [`seda-bus-cs`](https://github.com/resolvingarchitecture/seda-bus-cs) — `0.1.0`; C# / .NET 8, depends on
   `ra-common-cs` (carries `Ra.Common.Envelope`). Follows `seda-bus-java`'s
   concurrency model instead — the shared, built-in `ThreadPool` and a real
   `SemaphoreSlim`, not a hand-rolled pool — since .NET has both, unlike
   Rust/C++.
-- [`seda-bus-go`](../seda-bus-go/) — `0.1.0`; depends on `ra-common-go` (carries
+- [`seda-bus-go`](https://github.com/resolvingarchitecture/seda-bus-go) — `0.1.0`; depends on `ra-common-go` (carries
   `messaging.Envelope`, aliased as `sedabus.Envelope`). Needs no worker pool
   at all, hand-rolled or borrowed — goroutines are cheap enough that each
   scheduled drain is just `go bus.drain(ch)`, bounded by a buffered-channel
@@ -354,7 +354,7 @@ mechanically — real OS threads, no garbage collector, so the shape translates
 directly. (`seda-bus-cpp/DESIGN.md` has the full treatment, including a note
 on the initial build getting the envelope-source call wrong.)
 
-- **Header-only**, matching [`ra-common-cpp`](../../common/ra-common-cpp/)'s
+- **Header-only**, matching [`ra-common-cpp`](https://github.com/resolvingarchitecture/ra-common-cpp)'s
   convention — no separate compilation step for the library itself.
 - **Depends on `ra-common-cpp`; carries `ra::common::Envelope`**, aliased as
   `ra::seda_bus::Envelope` — same posture as every other port.
@@ -513,7 +513,7 @@ but a **full closed-loop thread-pool resizer is probably not worth building**,
 based on both the production record and this family's own retrospective:
 
 - **No production precedent.** No major broker (Kafka, NATS, RabbitMQ, Pulsar)
-  ships one — see [`seda-bus-compare/3RDPARTY.md`](../seda-bus-compare/3RDPARTY.md)
+  ships one — see [`seda-bus-compare/3RDPARTY.md`](https://github.com/resolvingarchitecture/seda-bus-compare/blob/master/3RDPARTY.md)
   for the full comparison. Mule, which is explicitly built on SEDA, documents
   that it "does not provide out-of-the-box mechanisms for adjusting the amount
   of threads used during runtime" — it relies on static developer tuning.

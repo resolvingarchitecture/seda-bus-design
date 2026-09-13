@@ -557,20 +557,111 @@ Smaller shared gaps: no backoff between retry attempts (immediate re-queue),
 strict FIFO per stage (no priority), per-channel `BATCH` is a constant, and
 dead-letter stores/files are unbounded.
 
-## 4. Positioning notes
+## 4. Current state vs. the landscape
 
-Angles worth using when describing this project externally, not yet polished
-into actual marketing copy:
+Positioning notes, extended into an actual comparison against
+[`3RDPARTY.md`](https://github.com/resolvingarchitecture/seda-bus-compare/blob/master/3RDPARTY.md)'s
+survey of brokers and staged/streaming systems — not yet polished into
+marketing copy.
 
-- The portability story: the same design, implemented seven times, gives an
-  adopter's architecture room to survive a language change.
-- Explicit, visible per-stage admission control is the real point of
-  contrast with a broker like Kafka (no admission control) or Storm
-  (bang-bang only, see `3RDPARTY.md`) — this design makes each stage's
-  backpressure policy a first-class, inspectable setting instead of an
-  emergent property of queue depth.
-- The credible version of a competitive benchmark isn't "faster than Kafka"
-  (unlikely to be true) — it's behavior at overload: does a consumer lag
-  silently, does a spout stall, or does the bus shed load at a known stage
-  with a flat `p99` elsewhere. That is the SEDA paper's original pitch, and
-  `seda-bus-compare`'s capacity-curve benchmark is built to show exactly this.
+**Where this sits on the static→adaptive spectrum.** `3RDPARTY.md` ranks
+designs on a rough ladder: static (Kafka, NATS, Mule) → bang-bang threshold
+throttling (Storm) → credit-based flow control (Flink) → single-loop PID
+rate control (Spark Streaming). All seven implementations sit at the static
+end today — §3 explains why that's a deliberate choice, not an oversight.
+What earns this design a place above "just static" is that back-pressure
+here is an explicit, inspectable, **per-stage setting**
+(`Block`/`Reject`/`DropNewest`/`DropOldest`, §1.5), not an emergent property
+of queue depth the way it is in Kafka (no admission control at all) or Storm
+(bang-bang only, no per-stage granularity).
+
+**The closest structural relative isn't a broker — it's the actor model.**
+RabbitMQ's and EMQX's per-queue mailbox/process pairing is functionally the
+same shape as a stage/channel here (mailbox = bounded queue, process = the
+thing draining it), but their concurrency is managed by the runtime
+scheduler, not exposed as a `capacity`/`concurrency` pair a caller sets
+directly. Redpanda's thread-per-core sharding is the other close relative,
+and a real counter-argument worth stating plainly: `seda-bus-compare`'s own
+core-budget finding (its `chan` benchmark needs roughly 2 threads of
+headroom per channel against the host's `available_parallelism()`, or
+latency degrades under contention even though throughput doesn't) is
+exactly the class of cross-core contention Redpanda's per-shard isolation
+avoids by construction, not by tuning. See upgrade 10 below.
+
+**The credible benchmark story, and where it's still thin.** The pitch isn't
+"faster than Kafka" — it's *behavior at overload*: does a consumer lag
+silently, does a spout stall, or does the bus shed load at a known stage
+with a flat `p99` elsewhere. That's the SEDA paper's original pitch, and
+`seda-bus-compare`'s capacity-curve benchmark (measuring each stage's real
+sustained ceiling under a bounded queue and `Block` back-pressure, then
+sweeping paced load at 0.5x/1.0x/1.5x of it) is built to show exactly that —
+nothing in `3RDPARTY.md`'s survey publishes an equivalent per-stage capacity
+curve to compare against. Set against that, sanitizer/production-hardening
+maturity is nowhere near the brokers in that table: only `seda-bus-go` has
+an actually-clean `-race` run behind it (§2.8); the rest rest on manual
+review and the fixed correctness suite (`CORRECTNESS_SUITE.md`), not a
+trusted sanitizer — see upgrade 11.
+
+**Portability has no analog in the comparison set.** Every broker in
+`3RDPARTY.md` is a single-stack implementation; this design's core value in
+a polyglot codebase — the same staged-pipeline shape surviving a language
+change — is a property none of them offer, because none of them exist in
+more than one language by design.
+
+## 5. Potential upgrades
+
+Numbered so a GitHub issue can reference one directly (e.g. "implements
+upgrade 3"). Grouped by theme, not by priority; none of these are committed
+or scheduled.
+
+**Admission control & flow**
+
+1. A stateless adaptive admission/shedding policy — the go-zero
+   `adaptiveShedder` pattern (sliding-window QPS/latency, compute a max
+   concurrency, shed above it). Closes the gap in §3 without the
+   oscillation risk of a full closed-loop controller.
+2. A runtime-tunable pool/concurrency size (an atomic, or a channel a
+   caller can push to), so an external orchestrator (Kubernetes HPA, a
+   sidecar, application code) can act on the metrics from §1.7 without the
+   library owning the policy.
+3. A `Credit` back-pressure mode alongside `Block`/`Reject`/`DropNewest`/
+   `DropOldest` — receiver-driven flow control (Flink's model, §4): a
+   downstream stage grants a producer a bounded number of admissions
+   instead of the producer only discovering "full" at offer time.
+4. Backoff between retry attempts — currently an immediate re-queue at the
+   queue's head (§1.6). At minimum a fixed delay; ideally exponential with
+   jitter.
+5. Priority scheduling within a stage — currently strict FIFO (§1.6). E.g.
+   a second "fast lane" for retries, or a caller-set priority field.
+
+**Parity gaps across ports**
+
+6. Guaranteed-delivery persistence (`AtLeastOnce`/`ExactlyOnce`) for the six
+   ports that lack it — Java is the only one that has it today (§2.2).
+7. Datatype channels (a per-stage type filter) for the six ports that lack
+   it — Java-only today (§2.2).
+8. A pull model (`receive()`/`poll()`) for the six ports that lack it —
+   Java-only today (§2.2).
+9. Bounded dead-letter stores — currently unbounded in every port that has
+   one (§3).
+10. An opt-in thread-per-core / sharded mode for the ports with real OS
+    threads (Rust, C++, Go, C#) — structurally closer to Redpanda (§4), to
+    sidestep the cross-core lock contention `seda-bus-compare` measured once
+    channel/thread count exceeds the host's core budget.
+
+**Verification**
+
+11. Extend sanitizer/concurrency-verification coverage beyond Go's clean
+    `-race` run (§2.8): a trustworthy TSan run in CI for Rust/C++ (the
+    sandbox attempt in this project couldn't be trusted), a concurrent
+    stress harness for Java, free-threaded race coverage for Python, a
+    .NET concurrency-analyzer pass for C#, and a `WorkerTransport`-specific
+    check for TypeScript.
+
+**Benchmarking**
+
+12. Expose `seda-bus-compare`'s capacity-curve calibration (measuring a
+    stage's real sustained ceiling under bounded back-pressure) as a
+    library-level helper (e.g. `bus.calibrate(channel)`), so an adopter can
+    discover safe capacity/concurrency settings for their own workload
+    instead of guessing.

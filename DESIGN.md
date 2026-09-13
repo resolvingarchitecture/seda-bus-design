@@ -100,6 +100,44 @@ batch (`BATCH` — 16 in Rust/Python, 32 in TS, 64 in Java), releases its permit
 and re-schedules itself if the queue is non-empty. Batching amortises the
 scheduling cost; the cap keeps one busy stage from holding a worker forever.
 
+One stage's admission, dispatch, and outcome paths, and how a multi-stage
+pipeline chains them via the routing slip:
+
+```mermaid
+flowchart LR
+    Producer(["Producer"]) -- "publish(env)" --> Offer
+
+    subgraph Stage["One Channel (stage)"]
+        direction TB
+        Offer{"queue full?"}
+        Queue[["Bounded queue\n(capacity)"]]
+        Permit{{"concurrency permit\nfree?"}}
+        Consumer["Consumer(s)\nPointToPoint or PubSub"]
+
+        Offer -- "no" --> Queue
+        Offer -- "yes: Block / Reject /\nDropNewest / DropOldest" --> BP["back-pressure\npolicy"]
+        BP -.-> Queue
+        Queue --> Permit
+        Permit -- "yes" --> Consumer
+        Permit -- "no: wait for a\nworker to free up" -.-> Permit
+    end
+
+    Consumer -- "ack" --> Hop{"routing slip:\nnext hop?"}
+    Hop -- "yes" --> NextStage(["publish to\nnext stage"])
+    Hop -- "no" --> Callback(["producer's completion\ncallback fires"])
+
+    Consumer -- "nack" --> Attempts{"attempts <\nmaxAttempts?"}
+    Attempts -- "yes" --> Queue
+    Attempts -- "no" --> DLQ[["dead-letter channel"]]
+
+    Stage -. "depth, enqueued, delivered,\nnacked, dropped, dead-lettered" .-> Metrics[("per-stage\nmetrics")]
+```
+
+One shared worker pool (or, in Go, goroutines bounded by a shared semaphore)
+drains every stage in the bus this way — the diagram shows one `Channel`;
+a real pipeline is several of these chained by routing slips, each with its
+own capacity, concurrency, and back-pressure policy.
+
 ### 1.3 The envelope and the routing slip
 
 An **envelope** is the unit of work: a stable `id`, a `to` (the channel it is
